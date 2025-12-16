@@ -1,6 +1,6 @@
 {
   "name": "@interval-health/capacitor-health",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Capacitor plugin to interact with data from Apple HealthKit and Health Connect",
   "main": "dist/plugin.cjs.js",
   "module": "dist/esm/index.js",
@@ -13,7 +13,7 @@
     "ios/Sources",
     "ios/Tests",
     "Package.swift",
-    "CapgoCapacitorHealth.podspec"
+    "IntervalHealthCapacitorHealth.podspec"
   ],
   "author": "Martin Donadieu <martin@capgo.app>",
   "license": "MPL-2.0",
