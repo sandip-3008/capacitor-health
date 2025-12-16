@@ -69,8 +69,8 @@ if (!availability.available) {
 
 // Ask for separate read/write access scopes
 await Health.requestAuthorization({
-  read: ['steps', 'heartRate', 'weight'],
-  write: ['weight'],
+  read: ['steps', 'heartRate', 'weight', 'sleep'],
+  write: ['weight', 'sleep'],
 });
 
 // Query the last 50 step samples from the past 24 hours
@@ -86,6 +86,14 @@ await Health.saveSample({
   dataType: 'weight',
   value: 74.3,
 });
+
+// Query sleep data from the past week
+const { samples: sleepSamples } = await Health.readSamples({
+  dataType: 'sleep',
+  startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  endDate: new Date().toISOString(),
+});
+// Each sleep sample includes: value (duration in minutes), sleepState (stage), startDate, endDate
 ```
 
 ### Supported data types
@@ -97,6 +105,7 @@ await Health.saveSample({
 | `calories` | `kilocalorie` | Active energy burned |
 | `heartRate`| `bpm`         | Beats per minute |
 | `weight`   | `kilogram`    | Body mass |
+| `sleep`    | `minute`      | Sleep sessions with stages (inBed, asleep, awake, asleepCore, asleepDeep, asleepREM) |
 
 All write operations expect the default unit shown above. On Android the `metadata` option is currently ignored by Health Connect.
 
@@ -249,15 +258,16 @@ Get the native Capacitor plugin version
 
 #### HealthSample
 
-| Prop             | Type                                                      |
-| ---------------- | --------------------------------------------------------- |
-| **`dataType`**   | <code><a href="#healthdatatype">HealthDataType</a></code> |
-| **`value`**      | <code>number</code>                                       |
-| **`unit`**       | <code><a href="#healthunit">HealthUnit</a></code>         |
-| **`startDate`**  | <code>string</code>                                       |
-| **`endDate`**    | <code>string</code>                                       |
-| **`sourceName`** | <code>string</code>                                       |
-| **`sourceId`**   | <code>string</code>                                       |
+| Prop             | Type                                                      | Description                                         |
+| ---------------- | --------------------------------------------------------- | --------------------------------------------------- |
+| **`dataType`**   | <code><a href="#healthdatatype">HealthDataType</a></code> |                                                     |
+| **`value`**      | <code>number</code>                                       |                                                     |
+| **`unit`**       | <code><a href="#healthunit">HealthUnit</a></code>         |                                                     |
+| **`startDate`**  | <code>string</code>                                       |                                                     |
+| **`endDate`**    | <code>string</code>                                       |                                                     |
+| **`sourceName`** | <code>string</code>                                       |                                                     |
+| **`sourceId`**   | <code>string</code>                                       |                                                     |
+| **`sleepState`** | <code><a href="#sleepstate">SleepState</a></code>         | Sleep state (only present when dataType is 'sleep') |
 
 
 #### QueryOptions
@@ -273,14 +283,14 @@ Get the native Capacitor plugin version
 
 #### WriteSampleOptions
 
-| Prop            | Type                                                            | Description                                                                                                                                                                                       |
-| --------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`dataType`**  | <code><a href="#healthdatatype">HealthDataType</a></code>       |                                                                                                                                                                                                   |
-| **`value`**     | <code>number</code>                                             |                                                                                                                                                                                                   |
-| **`unit`**      | <code><a href="#healthunit">HealthUnit</a></code>               | Optional unit override. If omitted, the default unit for the data type is used (count for `steps`, meter for `distance`, kilocalorie for `calories`, bpm for `heartRate`, kilogram for `weight`). |
-| **`startDate`** | <code>string</code>                                             | ISO 8601 start date for the sample. Defaults to now.                                                                                                                                              |
-| **`endDate`**   | <code>string</code>                                             | ISO 8601 end date for the sample. Defaults to startDate.                                                                                                                                          |
-| **`metadata`**  | <code><a href="#record">Record</a>&lt;string, string&gt;</code> | Metadata key-value pairs forwarded to the native APIs where supported.                                                                                                                            |
+| Prop            | Type                                                            | Description                                                                                                                                                                                                           |
+| --------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`dataType`**  | <code><a href="#healthdatatype">HealthDataType</a></code>       |                                                                                                                                                                                                                       |
+| **`value`**     | <code>number</code>                                             |                                                                                                                                                                                                                       |
+| **`unit`**      | <code><a href="#healthunit">HealthUnit</a></code>               | Optional unit override. If omitted, the default unit for the data type is used (count for `steps`, meter for `distance`, kilocalorie for `calories`, bpm for `heartRate`, kilogram for `weight`, minute for `sleep`). |
+| **`startDate`** | <code>string</code>                                             | ISO 8601 start date for the sample. Defaults to now.                                                                                                                                                                  |
+| **`endDate`**   | <code>string</code>                                             | ISO 8601 end date for the sample. Defaults to startDate.                                                                                                                                                              |
+| **`metadata`**  | <code><a href="#record">Record</a>&lt;string, string&gt;</code> | Metadata key-value pairs forwarded to the native APIs where supported.                                                                                                                                                |
 
 
 ### Type Aliases
@@ -288,12 +298,17 @@ Get the native Capacitor plugin version
 
 #### HealthDataType
 
-<code>'steps' | 'distance' | 'calories' | 'heartRate' | 'weight'</code>
+<code>'steps' | 'distance' | 'calories' | 'heartRate' | 'weight' | 'sleep'</code>
 
 
 #### HealthUnit
 
-<code>'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram'</code>
+<code>'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram' | 'minute'</code>
+
+
+#### SleepState
+
+<code>'inBed' | 'asleep' | 'awake' | 'asleepCore' | 'asleepDeep' | 'asleepREM' | 'unknown'</code>
 
 
 #### Record

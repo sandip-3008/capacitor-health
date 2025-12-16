@@ -33,8 +33,16 @@ enum HealthDataType: String, CaseIterable {
     case calories
     case heartRate
     case weight
+    case sleep
 
-    func sampleType() throws -> HKQuantityType {
+    func sampleType() throws -> HKSampleType {
+        if self == .sleep {
+            guard let type = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+                throw HealthManagerError.dataTypeUnavailable(rawValue)
+            }
+            return type
+        }
+        
         let identifier: HKQuantityTypeIdentifier
         switch self {
         case .steps:
@@ -47,6 +55,8 @@ enum HealthDataType: String, CaseIterable {
             identifier = .heartRate
         case .weight:
             identifier = .bodyMass
+        case .sleep:
+            fatalError("Sleep should have been handled above")
         }
 
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else {
@@ -67,6 +77,8 @@ enum HealthDataType: String, CaseIterable {
             return HKUnit.count().unitDivided(by: HKUnit.minute())
         case .weight:
             return HKUnit.gramUnit(with: .kilo)
+        case .sleep:
+            return HKUnit.minute() // Sleep duration in minutes
         }
     }
 
@@ -82,6 +94,8 @@ enum HealthDataType: String, CaseIterable {
             return "bpm"
         case .weight:
             return "kilogram"
+        case .sleep:
+            return "minute"
         }
     }
 
@@ -207,6 +221,43 @@ final class Health {
                 return
             }
 
+            guard let samples = samples else {
+                completion(.success([]))
+                return
+            }
+
+            // Handle sleep data (category samples)
+            if dataType == .sleep {
+                guard let categorySamples = samples as? [HKCategorySample] else {
+                    completion(.success([]))
+                    return
+                }
+
+                let results = categorySamples.map { sample -> [String: Any] in
+                    let duration = sample.endDate.timeIntervalSince(sample.startDate) / 60.0 // in minutes
+                    let sleepValue = self.sleepValueString(for: sample.value)
+                    
+                    var payload: [String: Any] = [
+                        "dataType": dataType.rawValue,
+                        "value": duration,
+                        "unit": dataType.unitIdentifier,
+                        "sleepState": sleepValue,
+                        "startDate": self.isoFormatter.string(from: sample.startDate),
+                        "endDate": self.isoFormatter.string(from: sample.endDate)
+                    ]
+
+                    let source = sample.sourceRevision.source
+                    payload["sourceName"] = source.name
+                    payload["sourceId"] = source.bundleIdentifier
+
+                    return payload
+                }
+
+                completion(.success(results))
+                return
+            }
+
+            // Handle quantity samples (existing logic)
             guard let quantitySamples = samples as? [HKQuantitySample] else {
                 completion(.success([]))
                 return
@@ -250,9 +301,6 @@ final class Health {
             throw HealthManagerError.invalidDateRange
         }
 
-        let unit = unit(for: unitIdentifier, dataType: dataType)
-        let quantity = HKQuantity(unit: unit, doubleValue: value)
-
         var metadataDictionary: [String: Any]?
         if let metadata = metadata, !metadata.isEmpty {
             metadataDictionary = metadata.reduce(into: [String: Any]()) { result, entry in
@@ -260,7 +308,27 @@ final class Health {
             }
         }
 
-        let sample = HKQuantitySample(type: sampleType, quantity: quantity, start: startDate, end: endDate, metadata: metadataDictionary)
+        let sample: HKSample
+        
+        // Handle sleep data (category samples)
+        if dataType == .sleep {
+            guard let categoryType = sampleType as? HKCategoryType else {
+                throw HealthManagerError.operationFailed("Invalid category type for sleep")
+            }
+            
+            // Value represents sleep state (0 = inBed, 1 = asleep, 2 = awake, etc.)
+            let sleepValue = Int(value)
+            sample = HKCategorySample(type: categoryType, value: sleepValue, start: startDate, end: endDate, metadata: metadataDictionary)
+        } else {
+            // Handle quantity samples (existing logic)
+            guard let quantityType = sampleType as? HKQuantityType else {
+                throw HealthManagerError.operationFailed("Invalid quantity type")
+            }
+            
+            let unit = unit(for: unitIdentifier, dataType: dataType)
+            let quantity = HKQuantity(unit: unit, doubleValue: value)
+            sample = HKQuantitySample(type: quantityType, quantity: quantity, start: startDate, end: endDate, metadata: metadataDictionary)
+        }
 
         healthStore.save(sample) { success, error in
             if let error = error {
@@ -379,6 +447,38 @@ final class Health {
         throw HealthManagerError.invalidDate(value)
     }
 
+    private func sleepValueString(for value: Int) -> String {
+        if #available(iOS 16.0, *) {
+            switch value {
+            case HKCategoryValueSleepAnalysis.inBed.rawValue:
+                return "inBed"
+            case HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue:
+                return "asleep"
+            case HKCategoryValueSleepAnalysis.awake.rawValue:
+                return "awake"
+            case HKCategoryValueSleepAnalysis.asleepCore.rawValue:
+                return "asleepCore"
+            case HKCategoryValueSleepAnalysis.asleepDeep.rawValue:
+                return "asleepDeep"
+            case HKCategoryValueSleepAnalysis.asleepREM.rawValue:
+                return "asleepREM"
+            default:
+                return "unknown"
+            }
+        } else {
+            switch value {
+            case HKCategoryValueSleepAnalysis.inBed.rawValue:
+                return "inBed"
+            case HKCategoryValueSleepAnalysis.asleep.rawValue:
+                return "asleep"
+            case HKCategoryValueSleepAnalysis.awake.rawValue:
+                return "awake"
+            default:
+                return "unknown"
+            }
+        }
+    }
+
     private func unit(for identifier: String?, dataType: HealthDataType) -> HKUnit {
         guard let identifier = identifier else {
             return dataType.defaultUnit
@@ -395,6 +495,8 @@ final class Health {
             return HKUnit.count().unitDivided(by: HKUnit.minute())
         case "kilogram":
             return HKUnit.gramUnit(with: .kilo)
+        case "minute":
+            return HKUnit.minute()
         default:
             return dataType.defaultUnit
         }

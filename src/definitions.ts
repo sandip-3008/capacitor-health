@@ -1,7 +1,7 @@
-export type HealthDataType = 'steps' | 'distance' | 'calories' | 'heartRate' | 'weight';
+export type HealthDataType = 'steps' | 'distance' | 'calories' | 'heartRate' | 'weight' | 'sleep';
 
-export type HealthUnit = 'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram';
-
+export type HealthUnit = 'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram' | 'minute';
+export type SleepState = 'inBed' | 'asleep' | 'awake' | 'asleepCore' | 'asleepDeep' | 'asleepREM' | 'unknown';
 export interface AuthorizationOptions {
   /** Data types that should be readable after authorization. */
   read?: HealthDataType[];
@@ -44,6 +44,8 @@ export interface HealthSample {
   endDate: string;
   sourceName?: string;
   sourceId?: string;
+  /** Sleep state (only present when dataType is 'sleep') */
+  sleepState?: SleepState;
 }
 
 export interface ReadSamplesResult {
@@ -55,7 +57,7 @@ export interface WriteSampleOptions {
   value: number;
   /**
    * Optional unit override. If omitted, the default unit for the data type is used
-   * (count for `steps`, meter for `distance`, kilocalorie for `calories`, bpm for `heartRate`, kilogram for `weight`).
+   * (count for `steps`, meter for `distance`, kilocalorie for `calories`, bpm for `heartRate`, kilogram for `weight`, minute for `sleep`).
    */
   unit?: HealthUnit;
   /** ISO 8601 start date for the sample. Defaults to now. */

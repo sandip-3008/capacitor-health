@@ -5,6 +5,7 @@ import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import kotlin.reflect.KClass
@@ -18,7 +19,8 @@ enum class HealthDataType(
     DISTANCE("distance", DistanceRecord::class, "meter"),
     CALORIES("calories", ActiveCaloriesBurnedRecord::class, "kilocalorie"),
     HEART_RATE("heartRate", HeartRateRecord::class, "bpm"),
-    WEIGHT("weight", WeightRecord::class, "kilogram");
+    WEIGHT("weight", WeightRecord::class, "kilogram"),
+    SLEEP("sleep", SleepSessionRecord::class, "minute");
 
     val readPermission: String
         get() = HealthPermission.getReadPermission(recordClass)
