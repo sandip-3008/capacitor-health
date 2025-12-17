@@ -20,7 +20,8 @@ enum class HealthDataType(
     CALORIES("calories", ActiveCaloriesBurnedRecord::class, "kilocalorie"),
     HEART_RATE("heartRate", HeartRateRecord::class, "bpm"),
     WEIGHT("weight", WeightRecord::class, "kilogram"),
-    SLEEP("sleep", SleepSessionRecord::class, "minute");
+    SLEEP("sleep", SleepSessionRecord::class, "minute"),
+    MOBILITY("mobility", StepsRecord::class, "mixed"); // Using StepsRecord as placeholder
 
     val readPermission: String
         get() = HealthPermission.getReadPermission(recordClass)

@@ -1,6 +1,6 @@
-export type HealthDataType = 'steps' | 'distance' | 'calories' | 'heartRate' | 'weight' | 'sleep';
+  export type HealthDataType = 'steps' | 'distance' | 'calories' | 'heartRate' | 'weight' | 'sleep' | 'mobility' | 'activity' | 'heart' | 'body';
 
-export type HealthUnit = 'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram' | 'minute';
+export type HealthUnit = 'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram' | 'minute' | 'mixed';
 export type SleepState = 'inBed' | 'asleep' | 'awake' | 'asleepCore' | 'asleepDeep' | 'asleepREM' | 'unknown';
 export interface AuthorizationOptions {
   /** Data types that should be readable after authorization. */
