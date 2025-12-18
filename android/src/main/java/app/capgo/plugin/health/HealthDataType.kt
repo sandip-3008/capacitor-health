@@ -3,6 +3,7 @@ package app.capgo.plugin.health
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
 import androidx.health.connect.client.records.DistanceRecord
+import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SleepSessionRecord
@@ -21,7 +22,8 @@ enum class HealthDataType(
     HEART_RATE("heartRate", HeartRateRecord::class, "bpm"),
     WEIGHT("weight", WeightRecord::class, "kilogram"),
     SLEEP("sleep", SleepSessionRecord::class, "minute"),
-    MOBILITY("mobility", StepsRecord::class, "mixed"); // Using StepsRecord as placeholder
+    MOBILITY("mobility", StepsRecord::class, "mixed"), // Using StepsRecord as placeholder
+    WORKOUT("workout", ExerciseSessionRecord::class, "minute");
 
     val readPermission: String
         get() = HealthPermission.getReadPermission(recordClass)

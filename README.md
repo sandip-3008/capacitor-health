@@ -173,7 +173,8 @@ export type HealthDataType =
   | 'mobility' 
   | 'activity' 
   | 'heart' 
-  | 'body';
+  | 'body'
+  | 'workout';
 ```
 
 | Data Type | Description | Unit | iOS | Android | Read | Write |
@@ -188,12 +189,13 @@ export type HealthDataType =
 | `activity` | Activity metrics | mixed | ✅ | ❌ | ✅ | ❌ |
 | `heart` | Heart health metrics | mixed | ✅ | ❌ | ✅ | ❌ |
 | `body` | Body measurements | mixed | ✅ | ❌ | ✅ | ❌ |
+| `workout` | Workout/exercise sessions | minute | ✅ | ❌ | ✅ | ❌ |
 
 **Platform Support Notes**:
-- **iOS** supports all 10 data types
+- **iOS** supports all 11 data types
 - **Android** supports only 5 basic data types: `steps`, `distance`, `calories`, `heartRate`, and `weight`
-- The `sleep`, `mobility`, `activity`, `heart`, and `body` types are **iOS-only** and not available on Android
-- Composite types (`mobility`, `activity`, `heart`, `body`) are **read-only** on iOS
+- The `sleep`, `mobility`, `activity`, `heart`, `body`, and `workout` types are **iOS-only** and not available on Android
+- Composite types (`mobility`, `activity`, `heart`, `body`, `workout`) are **read-only** on iOS
 
 ### Sleep States
 
@@ -208,6 +210,55 @@ When reading sleep data, each sample may include a `sleepState` property:
 | `asleepDeep` | Deep sleep stage |
 | `asleepREM` | REM (Rapid Eye Movement) sleep stage |
 | `unknown` | Sleep state could not be determined |
+
+### Workout Data
+
+When reading workout data (`dataType: 'workout'`), the returned data structure includes:
+
+```typescript
+interface WorkoutData {
+  date: string;           // ISO date (YYYY-MM-DD)
+  type: string;           // Activity type (e.g., "Running", "Cycling", "Swimming")
+  duration: number;       // Duration in minutes
+  distance?: number;      // Distance in miles (optional)
+  calories?: number;      // Calories burned (optional)
+  source?: string;        // Source app name (optional)
+  avgHeartRate?: number;  // Average heart rate in BPM (optional)
+  maxHeartRate?: number;  // Maximum heart rate in BPM (optional)
+  zones?: {               // Heart rate zones in minutes (optional)
+    zone1?: number;       // 50-60% max HR
+    zone2?: number;       // 60-70% max HR
+    zone3?: number;       // 70-80% max HR
+    zone4?: number;       // 80-90% max HR
+    zone5?: number;       // 90-100% max HR
+  };
+}
+```
+
+**Supported Workout Types**: Running, Cycling, Walking, Swimming, Yoga, FunctionalStrengthTraining, TraditionalStrengthTraining, Elliptical, Rowing, Hiking, HighIntensityIntervalTraining, Dance, Basketball, Soccer, Tennis, Golf, StairClimbing, and more.
+
+**Example**:
+```typescript
+const result = await Health.readSamples({
+  dataType: 'workout',
+  startDate: '2024-01-01T00:00:00Z',
+  endDate: '2024-01-31T23:59:59Z',
+  limit: 50
+});
+
+// Sample output:
+// {
+//   date: "2024-01-15",
+//   type: "Running",
+//   duration: 45,
+//   distance: 5.23,
+//   calories: 450,
+//   source: "Apple Watch",
+//   avgHeartRate: 145,
+//   maxHeartRate: 175,
+//   zones: { zone2: 10, zone3: 20, zone4: 15 }
+// }
+```
 
 ---
 

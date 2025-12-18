@@ -1,7 +1,27 @@
-  export type HealthDataType = 'steps' | 'distance' | 'calories' | 'heartRate' | 'weight' | 'sleep' | 'mobility' | 'activity' | 'heart' | 'body';
+  export type HealthDataType = 'steps' | 'distance' | 'calories' | 'heartRate' | 'weight' | 'sleep' | 'mobility' | 'activity' | 'heart' | 'body' | 'workout';
 
 export type HealthUnit = 'count' | 'meter' | 'kilocalorie' | 'bpm' | 'kilogram' | 'minute' | 'mixed';
 export type SleepState = 'inBed' | 'asleep' | 'awake' | 'asleepCore' | 'asleepDeep' | 'asleepREM' | 'unknown';
+
+export interface WorkoutHeartRateZones {
+  zone1?: number; // 50-60% max HR, in minutes
+  zone2?: number; // 60-70% max HR, in minutes
+  zone3?: number; // 70-80% max HR, in minutes
+  zone4?: number; // 80-90% max HR, in minutes
+  zone5?: number; // 90-100% max HR, in minutes
+}
+
+export interface WorkoutData {
+  date: string; // ISO date (YYYY-MM-DD)
+  type: string; // Activity type (e.g., "Running", "Cycling")
+  duration: number; // Duration in minutes
+  distance?: number; // Distance in miles
+  calories?: number; // Calories burned
+  source?: string; // Source app name
+  avgHeartRate?: number; // Average heart rate in BPM
+  maxHeartRate?: number; // Maximum heart rate in BPM
+  zones?: WorkoutHeartRateZones; // Heart rate zones
+}
 export interface AuthorizationOptions {
   /** Data types that should be readable after authorization. */
   read?: HealthDataType[];

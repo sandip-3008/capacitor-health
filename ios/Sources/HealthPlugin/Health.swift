@@ -38,6 +38,7 @@ enum HealthDataType: String, CaseIterable {
     case activity
     case heart
     case body
+    case workout
 
     func sampleType() throws -> HKSampleType {
         if self == .sleep {
@@ -79,6 +80,11 @@ enum HealthDataType: String, CaseIterable {
             return type
         }
         
+        if self == .workout {
+            // Workout uses HKWorkoutType
+            return HKObjectType.workoutType()
+        }
+        
         let identifier: HKQuantityTypeIdentifier
         switch self {
         case .steps:
@@ -101,6 +107,8 @@ enum HealthDataType: String, CaseIterable {
             fatalError("Heart should have been handled above")
         case .body:
             fatalError("Body should have been handled above")
+        case .workout:
+            fatalError("Workout should have been handled above")
         }
 
         guard let type = HKObjectType.quantityType(forIdentifier: identifier) else {
@@ -131,6 +139,8 @@ enum HealthDataType: String, CaseIterable {
             return HKUnit.count().unitDivided(by: HKUnit.minute()) // Placeholder, heart has multiple units
         case .body:
             return HKUnit.gramUnit(with: .kilo) // Placeholder, body has multiple units
+        case .workout:
+            return HKUnit.minute() // Workout duration in minutes
         }
     }
 
@@ -156,6 +166,8 @@ enum HealthDataType: String, CaseIterable {
             return "mixed" // Heart has multiple units
         case .body:
             return "mixed" // Body has multiple units
+        case .workout:
+            return "minute" // Workout duration in minutes
         }
     }
 
@@ -317,6 +329,19 @@ final class Health {
                 switch result {
                 case .success(let mobilityData):
                     completion(.success(mobilityData))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
+            }
+            return
+        }
+        
+        // Handle workout data
+        if dataType == .workout {
+            processWorkoutData(startDate: startDate, endDate: endDate, limit: limit, ascending: ascending) { result in
+                switch result {
+                case .success(let workoutData):
+                    completion(.success(workoutData))
                 case .failure(let error):
                     completion(.failure(error))
                 }
@@ -2059,5 +2084,303 @@ final class Health {
             
             completion(.success(heartData))
         }
+    }
+    
+    // MARK: - Workout Data Processing
+    
+    private func processWorkoutData(startDate: Date, endDate: Date, limit: Int?, ascending: Bool, completion: @escaping (Result<[[String: Any]], Error>) -> Void) {
+        let workoutType = HKObjectType.workoutType()
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: ascending)
+        let queryLimit = limit ?? HKObjectQueryNoLimit
+        
+        let query = HKSampleQuery(sampleType: workoutType, predicate: predicate, limit: queryLimit, sortDescriptors: [sortDescriptor]) { [weak self] _, samples, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            
+            guard let workouts = samples as? [HKWorkout], !workouts.isEmpty else {
+                completion(.success([]))
+                return
+            }
+            
+            var workoutData: [[String: Any]] = []
+            let group = DispatchGroup()
+            let lock = NSLock()
+            
+            for workout in workouts {
+                group.enter()
+                
+                // Extract basic workout info
+                let dateFormatter = ISO8601DateFormatter()
+                dateFormatter.formatOptions = [.withFullDate]
+                let date = dateFormatter.string(from: workout.startDate)
+                
+                // Get workout type (remove "HKWorkoutActivityType" prefix to match XML format)
+                let activityTypeString = self.workoutActivityTypeString(for: workout.workoutActivityType)
+                
+                // Duration in minutes (matching XML parser logic)
+                let durationInMinutes = Int(round(workout.duration / 60.0))
+                
+                // Distance in miles (if available)
+                var distance: Double?
+                if let totalDistance = workout.totalDistance {
+                    let distanceInMeters = totalDistance.doubleValue(for: HKUnit.meter())
+                    distance = distanceInMeters * 0.000621371 // meters to miles
+                }
+                
+                // Calories (if available)
+                var calories: Int?
+                if let totalEnergy = workout.totalEnergyBurned {
+                    let caloriesValue = totalEnergy.doubleValue(for: HKUnit.kilocalorie())
+                    calories = Int(round(caloriesValue))
+                }
+                
+                // Source name
+                let source = workout.sourceRevision.source.name
+                
+                // Query for heart rate statistics during this workout
+                self.queryWorkoutHeartRateStatistics(for: workout) { avgHR, maxHR in
+                    // Query for heart rate zones
+                    self.queryWorkoutHeartRateZones(for: workout) { zones in
+                        lock.lock()
+                        
+                        var workoutDict: [String: Any] = [
+                            "date": date,
+                            "type": activityTypeString,
+                            "duration": durationInMinutes,
+                            "source": source
+                        ]
+                        
+                        if let distance = distance {
+                            workoutDict["distance"] = round(distance * 100) / 100 // 2 decimal places
+                        }
+                        
+                        if let calories = calories {
+                            workoutDict["calories"] = calories
+                        }
+                        
+                        if let avgHR = avgHR {
+                            workoutDict["avgHeartRate"] = avgHR
+                        }
+                        
+                        if let maxHR = maxHR {
+                            workoutDict["maxHeartRate"] = maxHR
+                        }
+                        
+                        if !zones.isEmpty {
+                            workoutDict["zones"] = zones
+                        }
+                        
+                        workoutData.append(workoutDict)
+                        lock.unlock()
+                        
+                        group.leave()
+                    }
+                }
+            }
+            
+            group.notify(queue: .main) {
+                // Sort by date if needed
+                let sortedData = workoutData.sorted { dict1, dict2 in
+                    guard let date1 = dict1["date"] as? String,
+                          let date2 = dict2["date"] as? String else {
+                        return false
+                    }
+                    return ascending ? date1 < date2 : date1 > date2
+                }
+                
+                completion(.success(sortedData))
+            }
+        }
+        
+        healthStore.execute(query)
+    }
+    
+    private func workoutActivityTypeString(for type: HKWorkoutActivityType) -> String {
+        // Return the activity type name without the "HKWorkoutActivityType" prefix
+        // to match the XML export format
+        switch type {
+        case .running: return "Running"
+        case .cycling: return "Cycling"
+        case .walking: return "Walking"
+        case .swimming: return "Swimming"
+        case .yoga: return "Yoga"
+        case .functionalStrengthTraining: return "FunctionalStrengthTraining"
+        case .traditionalStrengthTraining: return "TraditionalStrengthTraining"
+        case .elliptical: return "Elliptical"
+        case .rowing: return "Rowing"
+        case .hiking: return "Hiking"
+        case .highIntensityIntervalTraining: return "HighIntensityIntervalTraining"
+        case .dance: return "Dance"
+        case .basketball: return "Basketball"
+        case .soccer: return "Soccer"
+        case .tennis: return "Tennis"
+        case .golf: return "Golf"
+        case .stairClimbing: return "StairClimbing"
+        case .stepTraining: return "StepTraining"
+        case .kickboxing: return "Kickboxing"
+        case .pilates: return "Pilates"
+        case .boxing: return "Boxing"
+        case .taiChi: return "TaiChi"
+        case .crossTraining: return "CrossTraining"
+        case .mindAndBody: return "MindAndBody"
+        case .coreTraining: return "CoreTraining"
+        case .flexibility: return "Flexibility"
+        case .cooldown: return "Cooldown"
+        case .wheelchairWalkPace: return "WheelchairWalkPace"
+        case .wheelchairRunPace: return "WheelchairRunPace"
+        case .other: return "Other"
+        default:
+            // For any unknown or new types
+            return "Other"
+        }
+    }
+    
+    private func queryWorkoutHeartRateStatistics(for workout: HKWorkout, completion: @escaping (Int?, Int?) -> Void) {
+        guard let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) else {
+            completion(nil, nil)
+            return
+        }
+        
+        let predicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+        
+        let query = HKStatisticsQuery(quantityType: heartRateType, quantitySamplePredicate: predicate, options: [.discreteAverage, .discreteMax]) { _, statistics, error in
+            if error != nil {
+                completion(nil, nil)
+                return
+            }
+            
+            var avgHR: Int?
+            var maxHR: Int?
+            
+            if let avgQuantity = statistics?.averageQuantity() {
+                let bpm = avgQuantity.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
+                avgHR = Int(round(bpm))
+            }
+            
+            if let maxQuantity = statistics?.maximumQuantity() {
+                let bpm = maxQuantity.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
+                maxHR = Int(round(bpm))
+            }
+            
+            completion(avgHR, maxHR)
+        }
+        
+        healthStore.execute(query)
+    }
+    
+    private func queryWorkoutHeartRateZones(for workout: HKWorkout, completion: @escaping ([String: Int]) -> Void) {
+        // Check if heart rate zone data is available in workout metadata
+        var zones: [String: Int] = [:]
+        
+        if let metadata = workout.metadata {
+            // Look for heart rate zone keys in metadata
+            // Apple Health stores zones as HKMetadataKeyHeartRateEventThreshold or custom keys
+            for (key, value) in metadata {
+                if key.contains("Zone") || key.contains("zone") {
+                    // Try to extract zone number
+                    if let zoneMatch = key.range(of: #"\d+"#, options: .regularExpression),
+                       let zoneNum = Int(key[zoneMatch]) {
+                        // Value might be in seconds, convert to minutes
+                        if let seconds = value as? Double {
+                            let minutes = Int(round(seconds / 60.0))
+                            zones["zone\(zoneNum)"] = minutes
+                        } else if let minutes = value as? Int {
+                            zones["zone\(zoneNum)"] = minutes
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If no zones found in metadata, try querying heart rate samples to calculate zones
+        if zones.isEmpty {
+            calculateHeartRateZones(for: workout) { calculatedZones in
+                completion(calculatedZones)
+            }
+        } else {
+            completion(zones)
+        }
+    }
+    
+    private func calculateHeartRateZones(for workout: HKWorkout, completion: @escaping ([String: Int]) -> Void) {
+        guard let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) else {
+            completion([:])
+            return
+        }
+        
+        let predicate = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate, options: .strictStartDate)
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+        
+        let query = HKSampleQuery(sampleType: heartRateType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: [sortDescriptor]) { _, samples, error in
+            if error != nil || samples == nil {
+                completion([:])
+                return
+            }
+            
+            guard let heartRateSamples = samples as? [HKQuantitySample], !heartRateSamples.isEmpty else {
+                completion([:])
+                return
+            }
+            
+            // Calculate zones based on standard heart rate zone definitions
+            // Zone 1: 50-60% max HR
+            // Zone 2: 60-70% max HR
+            // Zone 3: 70-80% max HR
+            // Zone 4: 80-90% max HR
+            // Zone 5: 90-100% max HR
+            
+            // Estimate max HR (220 - age), or use 180 as a reasonable default
+            let estimatedMaxHR = 180.0
+            
+            var zoneMinutes: [Int: TimeInterval] = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
+            
+            for i in 0..<heartRateSamples.count {
+                let sample = heartRateSamples[i]
+                let bpm = sample.quantity.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
+                let percentMax = (bpm / estimatedMaxHR) * 100
+                
+                // Determine zone
+                let zone: Int
+                if percentMax < 60 {
+                    zone = 1
+                } else if percentMax < 70 {
+                    zone = 2
+                } else if percentMax < 80 {
+                    zone = 3
+                } else if percentMax < 90 {
+                    zone = 4
+                } else {
+                    zone = 5
+                }
+                
+                // Calculate time in this zone (use interval to next sample or default to 5 seconds)
+                let duration: TimeInterval
+                if i < heartRateSamples.count - 1 {
+                    duration = heartRateSamples[i + 1].startDate.timeIntervalSince(sample.startDate)
+                } else {
+                    duration = 5.0 // Default 5 seconds for last sample
+                }
+                
+                zoneMinutes[zone, default: 0] += duration
+            }
+            
+            // Convert seconds to minutes and filter out zones with 0 minutes
+            var zones: [String: Int] = [:]
+            for (zone, seconds) in zoneMinutes {
+                let minutes = Int(round(seconds / 60.0))
+                if minutes > 0 {
+                    zones["zone\(zone)"] = minutes
+                }
+            }
+            
+            completion(zones)
+        }
+        
+        healthStore.execute(query)
     }
 }
