@@ -1366,6 +1366,12 @@ final class Health {
     private func processMobilityData(startDate: Date, endDate: Date, completion: @escaping (Result<[[String: Any]], Error>) -> Void) {
         let calendar = Calendar.current
         
+        // Calculate the local date range that corresponds to the input UTC date range
+        let startDateComponents = calendar.dateComponents([.year, .month, .day], from: startDate)
+        let endDateComponents = calendar.dateComponents([.year, .month, .day], from: endDate)
+        let localStartDateString = String(format: "%04d-%02d-%02d", startDateComponents.year!, startDateComponents.month!, startDateComponents.day!)
+        let localEndDateString = String(format: "%04d-%02d-%02d", endDateComponents.year!, endDateComponents.month!, endDateComponents.day!)
+        
         // Define all mobility quantity types
         let mobilityTypes: [(HKQuantityTypeIdentifier, String)] = [
             (.walkingSpeed, "walkingSpeed"),
@@ -1505,10 +1511,15 @@ final class Health {
             allDates.formUnion(stairSpeedMap.keys)
             allDates.formUnion(sixMinWalkMap.keys)
             
+            // Filter dates to only include those within the requested local date range
+            let filteredDates = allDates.filter { date in
+                return date >= localStartDateString && date <= localEndDateString
+            }
+            
             // Create mobility data array with aggregated daily averages
             var mobilityData: [[String: Any]] = []
             
-            for date in allDates.sorted() {
+            for date in filteredDates.sorted() {
                 var result: [String: Any] = ["date": date]
                 
                 // Average all measurements for the day
@@ -1555,6 +1566,13 @@ final class Health {
         let calendar = Calendar.current
         let group = DispatchGroup()
         let lock = NSLock()
+        
+        // Calculate the local date range that corresponds to the input UTC date range
+        // This ensures we only return data for dates that fall within the requested range
+        let startDateComponents = calendar.dateComponents([.year, .month, .day], from: startDate)
+        let endDateComponents = calendar.dateComponents([.year, .month, .day], from: endDate)
+        let localStartDateString = String(format: "%04d-%02d-%02d", startDateComponents.year!, startDateComponents.month!, startDateComponents.day!)
+        let localEndDateString = String(format: "%04d-%02d-%02d", endDateComponents.year!, endDateComponents.month!, endDateComponents.day!)
         
         // Maps to store values by date for each metric
         var stepsMap: [String: Double] = [:]
@@ -1769,8 +1787,14 @@ final class Health {
             allDates.formUnion(exerciseMinutesMap.keys)
             allDates.formUnion(standHoursMap.keys)
             
+            // Filter dates to only include those within the requested local date range
+            // This prevents returning data from dates outside the user's intended range
+            let filteredDates = allDates.filter { date in
+                return date >= localStartDateString && date <= localEndDateString
+            }
+            
             // Create activity data array matching the reference format
-            let activityData: [[String: Any]] = allDates.sorted().compactMap { date in
+            let activityData: [[String: Any]] = filteredDates.sorted().compactMap { date in
                 var result: [String: Any] = ["date": date]
                 
                 // Add each metric if available, with proper rounding
@@ -1811,6 +1835,12 @@ final class Health {
         let calendar = Calendar.current
         let group = DispatchGroup()
         let lock = NSLock()
+        
+        // Calculate the local date range that corresponds to the input UTC date range
+        let startDateComponents = calendar.dateComponents([.year, .month, .day], from: startDate)
+        let endDateComponents = calendar.dateComponents([.year, .month, .day], from: endDate)
+        let localStartDateString = String(format: "%04d-%02d-%02d", startDateComponents.year!, startDateComponents.month!, startDateComponents.day!)
+        let localEndDateString = String(format: "%04d-%02d-%02d", endDateComponents.year!, endDateComponents.month!, endDateComponents.day!)
         
         // Maps to store values by date for each metric
         struct HeartRateStats {
@@ -2040,8 +2070,13 @@ final class Health {
             allDates.formUnion(spo2Map.keys)
             allDates.formUnion(respirationRateMap.keys)
             
+            // Filter dates to only include those within the requested local date range
+            let filteredDates = allDates.filter { date in
+                return date >= localStartDateString && date <= localEndDateString
+            }
+            
             // Create heart data array matching the TypeScript format
-            let heartData: [[String: Any]] = allDates.sorted().compactMap { date in
+            let heartData: [[String: Any]] = filteredDates.sorted().compactMap { date in
                 var result: [String: Any] = ["date": date]
                 
                 // Heart Rate (avg, min, max, count)
