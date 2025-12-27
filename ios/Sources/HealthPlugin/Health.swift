@@ -351,9 +351,14 @@ final class Health {
         
         // For all other data types, use the standard query approach
         let sampleType = try dataType.sampleType()
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+        // Use .strictStartDate to include samples that start within the range (even if they end after endDate)
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: ascending)
-        let queryLimit = limit ?? 100
+        
+        // Use no limit by default to ensure all samples are retrieved
+        // This is important for data types like sleep, heart rate, steps, etc.
+        // where a single day or long date ranges can have many samples
+        let queryLimit = limit ?? HKObjectQueryNoLimit
 
         let query = HKSampleQuery(sampleType: sampleType, predicate: predicate, limit: queryLimit, sortDescriptors: [sortDescriptor]) { [weak self] _, samples, error in
             guard let self = self else { return }
@@ -842,16 +847,23 @@ final class Health {
     }
     
     private func processSleepSamples(_ samples: [HKCategorySample]) -> [[String: Any]] {
-        // Filter for detailed stage data only (Deep, REM, Core, Awake)
+        // Filter for sleep stage data - include both detailed stages (iOS 16+) and legacy values
+        // This ensures we capture data from all sources (Apple Watch, third-party apps, etc.)
         let detailedSamples = samples.filter { sample in
             if #available(iOS 16.0, *) {
+                // Include all sleep-related values:
+                // - Detailed stages: asleepDeep, asleepREM, asleepCore, awake (iOS 16+)
+                // - Legacy/basic: asleepUnspecified, asleep (for older data or third-party apps)
+                // - Exclude: inBed (not actual sleep, just time in bed)
                 return sample.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue ||
                        sample.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue ||
                        sample.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue ||
-                       sample.value == HKCategoryValueSleepAnalysis.awake.rawValue
+                       sample.value == HKCategoryValueSleepAnalysis.awake.rawValue ||
+                       sample.value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue
             } else {
-                // For older iOS, just process what's available
-                return true
+                // For older iOS, include asleep and awake, exclude inBed
+                return sample.value == HKCategoryValueSleepAnalysis.asleep.rawValue ||
+                       sample.value == HKCategoryValueSleepAnalysis.awake.rawValue
             }
         }
         
@@ -927,6 +939,7 @@ final class Health {
             var remMinutes: Double
             var coreMinutes: Double
             var awakeMinutes: Double
+            var unspecifiedMinutes: Double // For legacy/third-party sleep data without stage details
         }
         
         var sleepByDate: [String: DayData] = [:]
@@ -944,7 +957,8 @@ final class Health {
                     deepMinutes: 0,
                     remMinutes: 0,
                     coreMinutes: 0,
-                    awakeMinutes: 0
+                    awakeMinutes: 0,
+                    unspecifiedMinutes: 0
                 )
             }
             
@@ -962,6 +976,10 @@ final class Health {
                     sleepByDate[dateString]!.coreMinutes += minutes
                 } else if segment.stage == "HKCategoryValueSleepAnalysisAwake" {
                     sleepByDate[dateString]!.awakeMinutes += minutes
+                } else if segment.stage == "HKCategoryValueSleepAnalysisAsleepUnspecified" ||
+                          segment.stage == "HKCategoryValueSleepAnalysisAsleep" {
+                    // Legacy sleep data or third-party apps that don't provide stage details
+                    sleepByDate[dateString]!.unspecifiedMinutes += minutes
                 }
             }
         }
@@ -974,14 +992,15 @@ final class Health {
             let remHours = data.remMinutes / 60.0
             let coreHours = data.coreMinutes / 60.0
             let awakeHours = data.awakeMinutes / 60.0
-            let totalSleepHours = deepHours + remHours + coreHours
+            let unspecifiedHours = data.unspecifiedMinutes / 60.0
+            // Include unspecified sleep in total (this captures legacy/third-party app data)
+            let totalSleepHours = deepHours + remHours + coreHours + unspecifiedHours
             
-            // Calculate time in bed from merged sessions (first start to last end)
+            // Calculate time in bed by summing each session's duration
+            // This avoids counting gaps between sessions (e.g., nap + main sleep)
             var timeInBed = 0.0
-            if !data.sessions.isEmpty {
-                let bedtime = data.sessions.first!.start
-                let wakeTime = data.sessions.last!.end
-                timeInBed = wakeTime.timeIntervalSince(bedtime) / 3600.0
+            for session in data.sessions {
+                timeInBed += session.end.timeIntervalSince(session.start) / 3600.0
             }
             
             // Calculate efficiency
@@ -1011,6 +1030,7 @@ final class Health {
                 "deepSleep": round(deepHours * 10) / 10,
                 "remSleep": round(remHours * 10) / 10,
                 "coreSleep": round(coreHours * 10) / 10,
+                "unspecifiedSleep": round(unspecifiedHours * 10) / 10, // Legacy/third-party sleep without stage details
                 "awakeTime": round(awakeHours * 10) / 10,
                 "timeInBed": round(timeInBed * 10) / 10,
                 "efficiency": efficiency,
@@ -1403,7 +1423,7 @@ final class Health {
             
             group.enter()
             
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: quantityType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1448,7 +1468,7 @@ final class Health {
                         lock.unlock()
                         
                     case .walkingAsymmetryPercentage:
-                        // Convert to percentage (HealthKit stores as decimal)
+                        // HKUnit.percent() returns fractional value (0.05 = 5%), multiply by 100 for percentage
                         value = sample.quantity.doubleValue(for: HKUnit.percent()) * 100
                         lock.lock()
                         if asymmetryMap[dateString] == nil {
@@ -1458,7 +1478,7 @@ final class Health {
                         lock.unlock()
                         
                     case .walkingDoubleSupportPercentage:
-                        // Convert to percentage (HealthKit stores as decimal)
+                        // HKUnit.percent() returns fractional value (0.30 = 30%), multiply by 100 for percentage
                         value = sample.quantity.doubleValue(for: HKUnit.percent()) * 100
                         lock.lock()
                         if doubleSupportMap[dateString] == nil {
@@ -1587,7 +1607,7 @@ final class Health {
         // === STEPS ===
         if let stepsType = HKObjectType.quantityType(forIdentifier: .stepCount) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: stepsType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1616,7 +1636,7 @@ final class Health {
         // === DISTANCE (Walking + Running) ===
         if let distanceType = HKObjectType.quantityType(forIdentifier: .distanceWalkingRunning) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: distanceType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1647,7 +1667,7 @@ final class Health {
         // === FLIGHTS CLIMBED ===
         if let flightsType = HKObjectType.quantityType(forIdentifier: .flightsClimbed) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: flightsType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1676,7 +1696,7 @@ final class Health {
         // === ACTIVE ENERGY ===
         if let activeEnergyType = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: activeEnergyType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1705,7 +1725,7 @@ final class Health {
         // === EXERCISE MINUTES ===
         if let exerciseType = HKObjectType.quantityType(forIdentifier: .appleExerciseTime) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: exerciseType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1734,7 +1754,7 @@ final class Health {
         // === STAND HOURS ===
         if let standHourType = HKObjectType.categoryType(forIdentifier: .appleStandHour) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: standHourType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1862,7 +1882,7 @@ final class Health {
         // === HEART RATE ===
         if let heartRateType = HKObjectType.quantityType(forIdentifier: .heartRate) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: heartRateType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1896,7 +1916,7 @@ final class Health {
         // === RESTING HEART RATE ===
         if let restingHRType = HKObjectType.quantityType(forIdentifier: .restingHeartRate) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: restingHRType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1925,7 +1945,7 @@ final class Health {
         // === VO2 MAX ===
         if let vo2MaxType = HKObjectType.quantityType(forIdentifier: .vo2Max) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: vo2MaxType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1954,7 +1974,7 @@ final class Health {
         // === HRV (Heart Rate Variability SDNN) ===
         if let hrvType = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: hrvType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -1983,7 +2003,7 @@ final class Health {
         // === SPO2 (Blood Oxygen Saturation) ===
         if let spo2Type = HKObjectType.quantityType(forIdentifier: .oxygenSaturation) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: spo2Type, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -2000,7 +2020,7 @@ final class Health {
                     let dateComponents = calendar.dateComponents([.year, .month, .day], from: sample.startDate)
                     let dateString = String(format: "%04d-%02d-%02d", dateComponents.year!, dateComponents.month!, dateComponents.day!)
                     
-                    // HealthKit stores as decimal (0.96), convert to percentage (96)
+                    // HKUnit.percent() returns fractional value (0.98 = 98%), multiply by 100 for percentage
                     let value = sample.quantity.doubleValue(for: HKUnit.percent()) * 100
                     lock.lock()
                     if spo2Map[dateString] == nil {
@@ -2016,7 +2036,7 @@ final class Health {
         // === RESPIRATION RATE ===
         if let respirationRateType = HKObjectType.quantityType(forIdentifier: .respiratoryRate) {
             group.enter()
-            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+            let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
             let query = HKSampleQuery(sampleType: respirationRateType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
                 defer { group.leave() }
                 
@@ -2125,7 +2145,7 @@ final class Health {
     
     private func processWorkoutData(startDate: Date, endDate: Date, limit: Int?, ascending: Bool, completion: @escaping (Result<[[String: Any]], Error>) -> Void) {
         let workoutType = HKObjectType.workoutType()
-        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: [])
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: ascending)
         let queryLimit = limit ?? HKObjectQueryNoLimit
         
